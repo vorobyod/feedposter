@@ -8,19 +8,54 @@
 
 use strict;
 
+use Date::Format::RSS;
 use Data::Dumper;
+use DBI;
 use LWP::UserAgent;
 use XML::Simple;
 
+use constant FEEDS_DB_FILE => 'feeds_data.db';
+
 my $config = {
     conn_timeout => 10,
+    blog => {
+        http_auth => 1,
+        http_username => 'http_username',
+        http_password => 'http_password',
+        blog_username => 'username',
+        blog_password => 'password',
+        post_url => 'http://braveneworldaily.org/xmlrpc.php'
+    },
     feeds => [
         {
+            id => 'rt',
             name => 'Russia Today',
             url => 'http://rt.com/news/today/rss/'
         }
     ]
 };
+
+# Say hi
+print "\nFeedPoster - v1.0\n\n";
+
+# Create Wordpress proxy object
+my $wp = WordPress::XMLRPC->new({
+    username => $config->{blog}->{blog_username},
+    password => $config->{blog}->{blog_password},
+    proxy => $config->{blog}->{post_url}
+});
+
+# Set fields for basic auth
+# TODO
+
+# Get categories and tags from blog
+print "Getting categories and tags from blog . . .";
+print "done\n";
+
+my @categories = ();
+my @tags = ();
+
+printf("We got %d categories, %d tags\n", scalar(@categories), scalar(@tags));
 
 # Process feeds
 my @feeds = @{$config->{feeds}};
@@ -66,7 +101,7 @@ print "Finished processing feeds.\n";
 #  F U N C T I O N S
 # ------------------------------------------------------------------------------
 #
-# Get feed
+# get_feed_data() - get feed
 #
 sub get_feed_data {
     my %args = @_;
@@ -91,15 +126,46 @@ sub get_feed_data {
 
 # ------------------------------------------------------------------------------
 #
-# Get new feed items - check last update date/time for feed and get feeds only
-# fresher than that time. If feed config parameter 'last_updated' is set, then
-# use that date/time as last update date.
+# get_new_feed_items() - get feed items, check last update date/time for feed
+# and get feeds only fresher than that time. If feed config parameter
+# 'last_updated' is set, then use that date/time as last update time.
 #
 sub get_new_feed_items {
     my %args = @_;
     my $feed = $args{feed} or die 'feed parameter required!';
     my $feed_data = $args{feed_data} or die 'feed_data parameter is required!';
-    # TODO
-    die 'Not implemented!';
+
+    # Get feed record from feeds DB
+    my $dbh = get_db();
+    my $feed_db_rec = $dbh->selectrow_hashref(
+        'SELECT * FROM feeds_data WHERE feed_id = ?',
+        undef, ('rt')
+    );
+    my $feed_last_item_datetime =
+        DateTime::Format::ISO8601->new()->parse_datetime(
+            $feed_db_rec->{last_item_date});
+
+    # For every item in newsfeed check publication date and if newer than
+    # last_item_date - add to new items list
+    my @result_feed_items = ();
+    foreach my $feed_item (@{$feed_data->{items}}) {
+        my $item_datetime = DateTime::Format::RSS->new()->parse_datetime(
+            $feed_item->{pubDate});
+
+        if ($item_datetime->epoch() > $feed_last_item_datetime->epoch()) {
+            push $feed_item, @result_feed_items;
+        }
+    }
+    return \@result_feed_items;
+}
+
+# ------------------------------------------------------------------------------
+#
+# get_db() - get feeds data DB handler. Returns standard DBI handler.
+#
+sub get_db {
+    my $dbh = DBI->connect('dbi:SQLite:dbname=' . FEEDS_DB_FILE ,"","") or
+        die 'Cannot open SQLite database, file:  ' . FEEDS_DB_FILE;
+    return $dbh;
 }
 
