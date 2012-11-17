@@ -15,7 +15,10 @@ use DBI;
 use LWP::UserAgent;
 use WordPress::XMLRPC;
 use XML::Simple;
+use YAML qw( LoadFile );
 
+use constant CONFIG_FILE => 'feedposter.yaml';
+use constant DEBUG => 1;
 use constant FEEDS_DB_FILE => 'feeds_data.db';
 
 BEGIN {
@@ -60,28 +63,7 @@ BEGIN {
     use strict 'refs';
 }
 
-my $config = {
-    conn_timeout => 10,
-    blog => {
-        http_auth => 1,
-        http_auth_credentials => {
-            netloc => 'braveneworldaily.org:443',
-            realm => 'Restricted Resource',
-            username => 'username',
-            password => 'password'
-        },
-        blog_username => 'username',
-        blog_password => 'password',
-        post_url => 'https://braveneworldaily.org/xmlrpc.php'
-    },
-    feeds => [
-        {
-            id => 'rt',
-            name => 'Russia Today',
-            url => 'http://rt.com/news/today/rss/'
-        }
-    ]
-};
+my $config = LoadFile(CONFIG_FILE);
 
 # Say hi
 print "\nFeedPoster - v1.0\n\n";
@@ -108,10 +90,22 @@ print "Getting categories and tags from blog . . .";
 print "done\n";
 
 my @categories = ();
+foreach my $category_rec ($wp->getCategories()) {
+    push @categories, $category_rec->{categoryName};
+}
+@categories = sort @categories;
+print Dumper({categories => \@categories}) if (DEBUG);
+
 my @tags = ();
+foreach my $tag_rec ($wp->getTags()) {
+    push @tags, $tag_rec->{name};
+}
+@tags = sort @tags;
+print Dumper({tags => \@tags}) if (DEBUG);
 
 printf("We got %d categories, %d tags\n", scalar(@categories), scalar(@tags));
 
+die "Stop Here";
 # Process feeds
 my @feeds = @{$config->{feeds}};
 
