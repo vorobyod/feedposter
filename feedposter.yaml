@@ -17,7 +17,17 @@ blog:
     post_url: "https://braveneworldaily.org/xmlrpc.php"
 
 feeds:
+    - id:   cnn
+      name: CNN World
+      url:  "http://rss.cnn.com/rss/cnn_world.rss"
+
     - id:   rt
       name: Russia Today
       url:  "http://rt.com/news/today/rss/"
+
+#    - id: redice
+#      name: Red Ice Radio
+#      url: "http://www.redicecreations.com/rss.xml"
+
+      
 
