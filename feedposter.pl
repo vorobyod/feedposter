@@ -8,23 +8,71 @@
 
 use strict;
 
-use Date::Format::RSS;
+use DateTime::Format::ISO8601;
+use DateTime::Format::RSS;
 use Data::Dumper;
 use DBI;
 use LWP::UserAgent;
+use WordPress::XMLRPC;
 use XML::Simple;
 
 use constant FEEDS_DB_FILE => 'feeds_data.db';
+
+BEGIN {
+
+    # Monkey-patch WordPress::XMLRPC to allow usage of basic auth while posting
+    # to blog
+    no strict 'refs';
+
+    *{'WordpRess::XMLRPC::connection_args'} = sub {
+        my $self = shift;
+        my %args = @_;
+        if (%args) {
+            $self->{connection_args} = \%args;
+        }
+        return %{$self->{connection_args}};
+    };
+
+    *{'WordpRess::XMLRPC::credentials'} = sub {
+        my $self = shift;
+        if (@_) {
+            $self->{credentials} = \@_;
+        }
+        return @{$self->{credentials}};
+    };
+
+    *{'WordPress::XMLRPC::server'} = sub {
+        my $self = shift;
+        unless( $self->{server} ){
+            $self->proxy or confess('missing proxy');
+            require XMLRPC::Lite;
+
+            $self->{server} ||= XMLRPC::Lite->proxy(
+                $self->proxy,
+                $self->connection_args
+            );
+            $self->{server}->credentials($self->credentials);
+
+        }
+        return $self->{server};
+    };
+
+    use strict 'refs';
+}
 
 my $config = {
     conn_timeout => 10,
     blog => {
         http_auth => 1,
-        http_username => 'http_username',
-        http_password => 'http_password',
+        http_auth_credentials => {
+            netloc => 'braveneworldaily.org:443',
+            realm => 'Restricted Resource',
+            username => 'username',
+            password => 'password'
+        },
         blog_username => 'username',
         blog_password => 'password',
-        post_url => 'http://braveneworldaily.org/xmlrpc.php'
+        post_url => 'https://braveneworldaily.org/xmlrpc.php'
     },
     feeds => [
         {
@@ -46,7 +94,14 @@ my $wp = WordPress::XMLRPC->new({
 });
 
 # Set fields for basic auth
-# TODO
+if ($config->{http_auth}) {
+    $wp->credentials(
+        $config->{http_auth_credentials}->{netloc},
+        $config->{http_auth_credentials}->{realm},
+        $config->{http_auth_credentials}->{username},
+        $config->{http_auth_credentials}->{password}
+    );
+}
 
 # Get categories and tags from blog
 print "Getting categories and tags from blog . . .";
