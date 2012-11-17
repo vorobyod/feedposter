@@ -86,11 +86,11 @@ foreach my $feed (@feeds) {
 
     # Get last update date/time for a feed and get all articles
     # newer than that date
-    my @new_feed_items = get_new_feed_items(
+    my $new_feed_items = get_new_feed_items(
         feed => $feed,
         feed_data => $feed_data
     );
-    if (scalar(@new_feed_items) == 0) {
+    if (scalar(@{$new_feed_items}) == 0) {
         print "No new feed items found for feed $feed->{name}\n";
         print "Skipping . . .\n";
         next;
@@ -98,7 +98,42 @@ foreach my $feed (@feeds) {
 
     # Scan all new newsfeed items for selected keywords and
     # get only those matching the keywords
-    # TODO
+    my @result_feed_items = ();
+    foreach my $feed_item (@{$new_feed_items}) {
+        my @matched_categories = ();
+        my @matched_tags = ();
+
+        # Search categories
+        foreach my $category (@categories) {
+            if (($feed_item->{title} =~ /$category/i) or
+                ($feed_item->{description} =~ /$category/i)) {
+                    push @matched_categories, $category;
+            }
+        }
+
+        # Search tags
+        foreach my $tag (@tags) {
+            if (($feed_item->{title} =~ /$tag/i) or
+                ($feed_item->{description} =~ /$tag/i)) {
+                    push @matched_tags, $tag;
+            }
+        }
+
+        # Prepare and add result data record to result data set if we have
+        # matched categories/matched tags
+        my $item_rec = {};
+        if (scalar(@matched_categories) > 0) {
+            $item_rec->{categories} = \@matched_categories;
+        }
+        if (scalar(@matched_tags) > 0) {
+            $item_rec->{tags} = \@matched_tags
+        }
+
+        if (%{$item_rec}) {
+            $item_rec->{feed_data} = $feed_item;
+            push @result_feed_items, $item_rec;
+        }
+    }
 
     # Process matched items and post them to WordPress
     # TODO
@@ -152,19 +187,25 @@ sub get_new_feed_items {
         'SELECT * FROM feeds_data WHERE feed_id = ?',
         undef, ('rt')
     );
-    my $feed_last_item_datetime =
-        DateTime::Format::ISO8601->new()->parse_datetime(
-            $feed_db_rec->{last_item_date});
+
+    my $feed_last_item_date_epoch = 0;
+    my $feed_last_item_date_str = $feed_db_rec->{last_item_date};
+    if (defined $feed_last_item_date_str and ($feed_last_item_date_str !~ /^\s*$/)) {
+        $feed_last_item_date_epoch = 
+            DateTime::Format::ISO8601->new()->parse_datetime(
+                $feed_last_item_date_str)
+
+    }
 
     # For every item in newsfeed check publication date and if newer than
     # last_item_date - add to new items list
     my @result_feed_items = ();
-    foreach my $feed_item (@{$feed_data->{items}}) {
+    foreach my $feed_item (@{$feed_data->{channel}{item}}) {
         my $item_datetime = DateTime::Format::RSS->new()->parse_datetime(
             $feed_item->{pubDate});
 
-        if ($item_datetime->epoch() > $feed_last_item_datetime->epoch()) {
-            push $feed_item, @result_feed_items;
+        if ($item_datetime->epoch() > $feed_last_item_date_epoch) {
+            push @result_feed_items, $feed_item;
         }
     }
     return \@result_feed_items;
