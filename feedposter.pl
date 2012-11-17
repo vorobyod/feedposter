@@ -13,6 +13,7 @@ use DateTime::Format::RSS;
 use Data::Dumper;
 use DBI;
 use LWP::UserAgent;
+use POSIX qw( strftime );
 use WordPress::XMLRPC;
 use XML::Simple;
 use YAML qw( LoadFile );
@@ -98,8 +99,108 @@ foreach my $feed (@feeds) {
 
     # Scan all new newsfeed items for selected keywords and
     # get only those matching the keywords
+    my $result_feed_items =
+        match_feed_items(feed_items => $new_feed_items);
+
+    # Process matched items and post them to WordPress
+    foreach my $item_rec (@{$result_feed_items}) {
+        post_feed_item_to_blog(item_rec => $item_rec);
+    }
+
+    # If we have feed items to post to blog - record date of last
+    # processed newsfeed item date and feed last processed time in DB.
+    if (scalar(@{$result_feed_items}) > 0) {
+        update_feed_db_data(
+            feed => $feed,
+            feed_data => $feed_data
+        );
+    }
+
+    print "Done.\n";
+}
+
+print "Finished processing feeds.\n";
+
+# ------------------------------------------------------------------------------
+#  F U N C T I O N S
+# ------------------------------------------------------------------------------
+#
+# get_feed_data() - get feed
+#
+sub get_feed_data {
+    my %args = @_;
+    my $feed = $args{feed} or die 'feed parameter required';
+    my $feed_conn_timeout = $feed->{conn_timeout} ||
+        $config->{conn_timeout};
+
+    my $user_agent = LWP::UserAgent->new;
+    $user_agent->timeout($feed_conn_timeout);
+
+    my $response = $user_agent->get($feed->{url});
+    die 'Error while fetching RSS from ' . $feed->{url}
+        unless ($response->is_success);
+
+    my $feed_xml = $response->decoded_content;
+    my $xs = XML::Simple->new(
+        ForceArray => [ 'item' ],
+    );
+    my $feed_data = $xs->parse_string($feed_xml);
+    return $feed_data;
+}
+
+# ------------------------------------------------------------------------------
+#
+# get_new_feed_items() - get feed items, check last update date/time for feed
+# and get feeds only fresher than that time. If feed config parameter
+# 'last_updated' is set, then use that date/time as last update time.
+#
+sub get_new_feed_items {
+    my %args = @_;
+    my $feed = $args{feed} or die 'feed parameter required';
+    my $feed_data = $args{feed_data} or die 'feed_data parameter is required';
+
+    # Get feed record from feeds DB
+    my $dbh = get_db();
+    my $feed_db_rec = $dbh->selectrow_hashref(
+        'SELECT * FROM feeds_data WHERE feed_id = ?',
+        undef, ('rt')
+    );
+
+    my $feed_last_item_date_epoch = 0;
+    my $feed_last_item_date_str = $feed_db_rec->{last_item_date};
+    if (defined $feed_last_item_date_str and ($feed_last_item_date_str !~ /^\s*$/)) {
+        $feed_last_item_date_epoch = 
+            DateTime::Format::ISO8601->new()->parse_datetime(
+                $feed_last_item_date_str)
+
+    }
+
+    # For every item in newsfeed check publication date and if newer than
+    # last_item_date - add to new items list
     my @result_feed_items = ();
-    foreach my $feed_item (@{$new_feed_items}) {
+    foreach my $feed_item (@{$feed_data->{channel}{item}}) {
+        my $item_datetime = DateTime::Format::RSS->new()->parse_datetime(
+            $feed_item->{pubDate});
+
+        if ($item_datetime->epoch() > $feed_last_item_date_epoch) {
+            $feed_item->{pubDateEpoch} = $item_datetime->epoch();
+            push @result_feed_items, $feed_item;
+        }
+    }
+    return \@result_feed_items;
+}
+
+# ------------------------------------------------------------------------------
+# 
+# match_feed_items() - match feed items against categories and tags
+#
+sub match_feed_items {
+    my %args = @_;
+    my $feed_items = $args{feed_items} or
+        die 'feed_items parameter required';
+
+    my @result_feed_items = ();
+    foreach my $feed_item (@{$feed_items}) {
         my @matched_categories = ();
         my @matched_tags = ();
 
@@ -130,85 +231,52 @@ foreach my $feed (@feeds) {
         }
 
         if (%{$item_rec}) {
-            $item_rec->{feed_data} = $feed_item;
+            $item_rec->{feed_item} = $feed_item;
             push @result_feed_items, $item_rec;
         }
     }
 
-    # Process matched items and post them to WordPress
-    # TODO
-
-    print "Done.\n";
-}
-
-print "Finished processing feeds.\n";
-
-# ------------------------------------------------------------------------------
-#  F U N C T I O N S
-# ------------------------------------------------------------------------------
-#
-# get_feed_data() - get feed
-#
-sub get_feed_data {
-    my %args = @_;
-    my $feed = $args{feed} or die 'feed parameter required!';
-    my $feed_conn_timeout = $feed->{conn_timeout} ||
-        $config->{conn_timeout};
-
-    my $user_agent = LWP::UserAgent->new;
-    $user_agent->timeout($feed_conn_timeout);
-
-    my $response = $user_agent->get($feed->{url});
-    die 'Error while fetching RSS from ' . $feed->{url}
-        unless ($response->is_success);
-
-    my $feed_xml = $response->decoded_content;
-    my $xs = XML::Simple->new(
-        ForceArray => [ 'item' ],
-    );
-    my $feed_data = $xs->parse_string($feed_xml);
-    return $feed_data;
-}
-
-# ------------------------------------------------------------------------------
-#
-# get_new_feed_items() - get feed items, check last update date/time for feed
-# and get feeds only fresher than that time. If feed config parameter
-# 'last_updated' is set, then use that date/time as last update time.
-#
-sub get_new_feed_items {
-    my %args = @_;
-    my $feed = $args{feed} or die 'feed parameter required!';
-    my $feed_data = $args{feed_data} or die 'feed_data parameter is required!';
-
-    # Get feed record from feeds DB
-    my $dbh = get_db();
-    my $feed_db_rec = $dbh->selectrow_hashref(
-        'SELECT * FROM feeds_data WHERE feed_id = ?',
-        undef, ('rt')
-    );
-
-    my $feed_last_item_date_epoch = 0;
-    my $feed_last_item_date_str = $feed_db_rec->{last_item_date};
-    if (defined $feed_last_item_date_str and ($feed_last_item_date_str !~ /^\s*$/)) {
-        $feed_last_item_date_epoch = 
-            DateTime::Format::ISO8601->new()->parse_datetime(
-                $feed_last_item_date_str)
-
-    }
-
-    # For every item in newsfeed check publication date and if newer than
-    # last_item_date - add to new items list
-    my @result_feed_items = ();
-    foreach my $feed_item (@{$feed_data->{channel}{item}}) {
-        my $item_datetime = DateTime::Format::RSS->new()->parse_datetime(
-            $feed_item->{pubDate});
-
-        if ($item_datetime->epoch() > $feed_last_item_date_epoch) {
-            push @result_feed_items, $feed_item;
-        }
-    }
     return \@result_feed_items;
+}
+
+sub post_feed_item_to_blog {
+    my %args = @_;
+    my $item_rec = $args{item_rec} or die 'item_rec parameter is required';
+    my $feed_item = $item_rec->{feed_item};
+
+    my $post_data = {
+        order_by => $feed_item->{pubDateEpoch},
+        post_data => {
+            categories => [ 'Uncategorized', @{$item_rec->{categories}} ],
+            tags => $item_rec->{tags},
+            dateCreated => strftime("%Y%m%dT%H:%M:%S",
+                localtime($feed_item->{pubDateEpoch})),
+            post_status => 'publish',
+            post_type => 'post',
+            post_format => 'standard',
+            title => $feed_item->{title},
+            mt_excerpt => '',
+            description => $feed_item->{description},
+            mt_allow_comments => 'open',
+            mt_allow_pings => 'open',
+            mt_keywords => ['import'],
+            sticky => 0
+        }
+    };
+    $wp->newPost($post_data, 1) or die $wp->errstr();
+}
+
+# ------------------------------------------------------------------------------
+#
+# update_feed_db_data() - update feed DB data (last feed item date,
+# last feed processed date, etc)
+#
+sub update_feed_db_date {
+    my %args = @_;
+    my $feed = $args{feed} or die 'feed parameter is required';
+    my $feed_data = $args{feed_data} or die 'feed_data parameter is required';
+
+    # TODO
 }
 
 # ------------------------------------------------------------------------------
