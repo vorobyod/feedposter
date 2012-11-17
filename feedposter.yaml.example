@@ -1,0 +1,33 @@
+#
+# FeedPoster config file
+#
+
+conn_timeout: 10
+
+blog:
+    http_auth: 1
+    http_auth_credentials:
+        netloc: "braveneworldaily.org:443"
+        realm:  Restricted Resource
+        username:   username
+        password:   password
+
+    blog_username: username
+    blog_password: password
+    post_url: "https://braveneworldaily.org/xmlrpc.php"
+
+feeds:
+    - id:   cnn
+      name: CNN World
+      url:  "http://rss.cnn.com/rss/cnn_world.rss"
+
+    - id:   rt
+      name: Russia Today
+      url:  "http://rt.com/news/today/rss/"
+
+#    - id: redice
+#      name: Red Ice Radio
+#      url: "http://www.redicecreations.com/rss.xml"
+
+      
+
