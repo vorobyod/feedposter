@@ -21,67 +21,30 @@ use constant CONFIG_FILE => 'feedposter.yaml';
 use constant DEBUG => 1;
 use constant FEEDS_DB_FILE => 'feeds_data.db';
 
-BEGIN {
-
-    # Monkey-patch WordPress::XMLRPC to allow usage of basic auth while posting
-    # to blog
-    no strict 'refs';
-
-    *{'WordpRess::XMLRPC::connection_args'} = sub {
-        my $self = shift;
-        my %args = @_;
-        if (%args) {
-            $self->{connection_args} = \%args;
-        }
-        return %{$self->{connection_args}};
-    };
-
-    *{'WordpRess::XMLRPC::credentials'} = sub {
-        my $self = shift;
-        if (@_) {
-            $self->{credentials} = \@_;
-        }
-        return @{$self->{credentials}};
-    };
-
-    *{'WordPress::XMLRPC::server'} = sub {
-        my $self = shift;
-        unless( $self->{server} ){
-            $self->proxy or confess('missing proxy');
-            require XMLRPC::Lite;
-
-            $self->{server} ||= XMLRPC::Lite->proxy(
-                $self->proxy,
-                $self->connection_args
-            );
-            $self->{server}->credentials($self->credentials);
-
-        }
-        return $self->{server};
-    };
-
-    use strict 'refs';
-}
-
 my $config = LoadFile(CONFIG_FILE);
+my $blog_config = $config->{blog};
 
 # Say hi
 print "\nFeedPoster - v1.0\n\n";
 
 # Create Wordpress proxy object
 my $wp = WordPress::XMLRPC->new({
-    username => $config->{blog}->{blog_username},
-    password => $config->{blog}->{blog_password},
-    proxy => $config->{blog}->{post_url}
+    username => $blog_config->{blog_username},
+    password => $blog_config->{blog_password},
+    proxy => $blog_config->{post_url}
 });
 
+# Set connection args
+$wp->server()->transport()->proxy()->ssl_opts( verify_hostname => 0 );
+
 # Set fields for basic auth
-if ($config->{http_auth}) {
-    $wp->credentials(
-        $config->{http_auth_credentials}->{netloc},
-        $config->{http_auth_credentials}->{realm},
-        $config->{http_auth_credentials}->{username},
-        $config->{http_auth_credentials}->{password}
+if ($blog_config->{http_auth}) {
+    my $auth_config = $blog_config->{http_auth_credentials};
+    $wp->server()->transport()->proxy()->credentials(
+        $auth_config->{netloc},
+        $auth_config->{realm},
+        $auth_config->{username},
+        $auth_config->{password}
     );
 }
 
@@ -90,14 +53,14 @@ print "Getting categories and tags from blog . . .";
 print "done\n";
 
 my @categories = ();
-foreach my $category_rec ($wp->getCategories()) {
+foreach my $category_rec (@{$wp->getCategories()}) {
     push @categories, $category_rec->{categoryName};
 }
 @categories = sort @categories;
 print Dumper({categories => \@categories}) if (DEBUG);
 
 my @tags = ();
-foreach my $tag_rec ($wp->getTags()) {
+foreach my $tag_rec (@{$wp->getTags()}) {
     push @tags, $tag_rec->{name};
 }
 @tags = sort @tags;
@@ -105,7 +68,6 @@ print Dumper({tags => \@tags}) if (DEBUG);
 
 printf("We got %d categories, %d tags\n", scalar(@categories), scalar(@tags));
 
-die "Stop Here";
 # Process feeds
 my @feeds = @{$config->{feeds}};
 
