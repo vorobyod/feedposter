@@ -83,6 +83,7 @@ print "Processing feeds, " . scalar(@feeds) . " to process\n";
 
 foreach my $feed (@feeds) {
     print "Processing feed $feed->{name} . . .\n";
+    $feed->{processed_at} = time();
     
     # Get RSS feed items
     my $feed_data = get_feed_data(feed => $feed);
@@ -100,7 +101,7 @@ foreach my $feed (@feeds) {
         next;
 
     } else {
-        printf("Done, found %d new feed items\n");
+        printf("Done, found %d new feed items\n", scalar(@$new_feed_items));
     }
 
     # Scan all new newsfeed items for selected keywords and
@@ -179,23 +180,23 @@ sub get_new_feed_items {
         undef, $feed->{id}
     );
 
-    my $last_item_date = 0;
-    my $last_item_date_str = $feed_db_rec->{last_item_date};
-    if (defined $last_item_date_str and ($last_item_date_str !~ /^\s*$/)) {
-        $last_item_date = 
+    my $last_processed_at = 0;
+    my $last_processed_at_str = $feed_db_rec->{last_processed_at};
+    if (defined $last_processed_at_str and ($last_processed_at_str !~ /^\s*$/)) {
+        $last_processed_at = 
             DateTime::Format::SQLite->new()->parse_datetime(
-                $last_item_date_str)->epoch();
+                $last_processed_at_str)->epoch();
 
     }
 
     # For every item in newsfeed check publication date and if newer than
-    # last_item_date - add to new items list
+    # last_processed_at - add to new items list
     my @result_feed_items = ();
     foreach my $feed_item (@{$feed_data->{channel}{item}}) {
         my $item_pubdate = DateTime::Format::RSS->new()->parse_datetime(
             $feed_item->{pubDate})->epoch();
 
-        if ($item_pubdate > $last_item_date) {
+        if ($item_pubdate > $last_processed_at) {
             $feed_item->{pubDateEpoch} = $item_pubdate;
             feed_item_preprocess(feed => $feed, feed_item => $feed_item);
             push @result_feed_items, $feed_item;
@@ -219,12 +220,21 @@ sub feed_item_preprocess {
     utf8::encode($feed_item->{description});
 
     # Strip ALL HTML tags from feed item text
-    # TODO
+    {
+        my $hr = HTML::Restrict->new();
+        $feed_item->{description} = $hr->process($feed_item->{description});
+    }
 
-    # Add link to source article
-    $feed_item->{description} =
-        "From <a href=\"$feed_item->{link}\" target=\"_new\">$feed->{name}</a><br /><br />\n\n" .
-        $feed_item->{description};
+    # Add link and enclosure (if set and is of type 'image/*') to source article
+    {
+        my $article_header = "From <a href=\"$feed_item->{link}\" target=\"_new\">$feed->{name}</a>:<br /><br />\n\n";
+        if (exists $feed_item->{enclosure}) {
+            if ($feed_item->{enclosure}{type} =~ /^image/) {
+                $article_header .= "<img src=\"$feed_item->{enclosure}{url}\" />\n\n"
+            }
+        }
+        $feed_item->{description} = $article_header . $feed_item->{description};
+    }
 }
 
 # ------------------------------------------------------------------------------
@@ -316,27 +326,20 @@ sub post_feed_item_to_blog {
 sub update_feed_db_data {
     my %args = @_;
     my $feed = $args{feed} or die 'feed parameter is required';
-    my $feed_data = $args{feed_data} or die 'feed_data parameter is required';
 
-    my $feed_last_item_date = strftime("%Y-%m-%d %H:%M:%S",
-        localtime(DateTime::Format::RSS->parse_datetime(
-            @{$feed_data->{channel}{item}}[0]->{pubDate})->epoch()));
-    print "Last feed item date: $feed_last_item_date\n";
-
-    my $feed_last_processed_date = strftime("%Y-%m-%d %H:%M:%S",
-        localtime(time()));
-    print "Feed last processed date: $feed_last_processed_date\n";
+    my $last_processed_at = strftime("%Y-%m-%d %H:%M:%S",
+        localtime($feed->{processed_at}));
+    print "Feed last processed date: $last_processed_at\n";
 
     my $dbh = get_db();
     my $rec = $dbh->selectrow_hashref(
         'SELECT * FROM feeds_data WHERE feed_id = ?', undef, $feed->{id});
     unless (defined $rec) {
-        $dbh->do('INSERT INTO feeds_data VALUES (?, ?, ?)', undef,
-            $feed->{id}, $feed_last_item_date, $feed_last_processed_date);
+        $dbh->do('INSERT INTO feeds_data VALUES (?, ?)', undef,
+            $feed->{id}, $last_processed_at);
     } else {
-        $dbh->do('UPDATE feeds_data SET last_item_date = ?, last_processed_date = ?' .
-            ' WHERE feed_id = ?', undef, $feed_last_item_date,
-                $feed_last_processed_date, $feed->{id});
+        $dbh->do('UPDATE feeds_data SET last_processed_at = ?' .
+            ' WHERE feed_id = ?', undef, $last_processed_at, $feed->{id});
     }
 }
 
