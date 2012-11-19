@@ -115,7 +115,7 @@ foreach my $feed (@feeds) {
     if (scalar(@$result_feed_items) > 0) {
         print "Posting new feed items to blog . . .\n";
         foreach my $item_rec (@$result_feed_items) {
-            post_feed_item_to_blog(item_rec => $item_rec);
+            post_feed_item_to_blog(feed => $feed, item_rec => $item_rec);
         }
         print "Done posting\n";
     }
@@ -198,7 +198,6 @@ sub get_new_feed_items {
 
         if ($item_pubdate > $last_processed_at) {
             $feed_item->{pubDateEpoch} = $item_pubdate;
-            feed_item_preprocess(feed => $feed, feed_item => $feed_item);
             push @result_feed_items, $feed_item;
         }
     }
@@ -294,8 +293,11 @@ sub match_feed_items {
 #
 sub post_feed_item_to_blog {
     my %args = @_;
-    my $item_rec = $args{item_rec} or die 'item_rec parameter is required';
+    my $feed = $args{feed} or die 'feed parameter required';
+    my $item_rec = $args{item_rec} or die 'item_rec parameter required';
     my $feed_item = $item_rec->{feed_item};
+
+    feed_item_preprocess(feed => $feed, feed_item => $feed_item);
 
     my %post_data = (
         categories => [ 'Uncategorized', @{$item_rec->{categories}} ],
