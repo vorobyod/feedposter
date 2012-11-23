@@ -1,0 +1,7 @@
+TODO:
+
+- Implement feeds posting per blog
+
+- Create related tags table, for instance, matching 'palestine' would
+  automatically match 'israel' and 'middle east' categories/tags
+
