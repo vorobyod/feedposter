@@ -25,131 +25,115 @@ use constant CONFIG_FILE => 'feedposter.yaml';
 use constant DEBUG => 1;
 use constant FEEDS_DB_FILE => 'feeds_data.db';
 
+my $config = LoadFile(CONFIG_FILE);
+my $blog_config = $config->{blog};
+
 # Say hi
 print "\nFeedPoster - v1.0\n\n";
 
-my $config = LoadFile(CONFIG_FILE);
+# Create Wordpress proxy object
+my $wp = WordPress::XMLRPC->new({
+    username => $blog_config->{blog_username},
+    password => $blog_config->{blog_password},
+    proxy => $blog_config->{post_url}
+});
 
-print "Processing blogs . . .\n";
-my $blogs_config = $config->{blogs};
-printf("Found %d blog records\n", scalar(@$blogs_config));
+# Set connection args
+$wp->server()->transport()->proxy()->ssl_opts( verify_hostname => 0 );
 
-foreach my $blog_config (@$blogs_config) {
-    my $blog_id = $blog_config->{blog_id};
-    my $blog_name = $blog_config->{blog_name};
+# Set fields for basic auth
+if ($blog_config->{http_auth}) {
+    my $auth_config = $blog_config->{http_auth_credentials};
+    $wp->server()->transport()->proxy()->credentials(
+        $auth_config->{netloc},
+        $auth_config->{realm},
+        $auth_config->{username},
+        $auth_config->{password}
+    );
+}
 
-    # Get credentials
-    if ($blog->{http_auth}) {
-        # TODO Load HTTP auth into credentials
+# Get categories and tags from blog
+print "Getting categories and tags from blog . . .";
+
+my @categories = ();
+foreach my $category_rec (@{$wp->getCategories()}) {
+    push @categories, $category_rec->{categoryName};
+}
+@categories = sort @categories;
+print Dumper({categories => \@categories}) if (DEBUG);
+
+my @tags = ();
+foreach my $tag_rec (@{$wp->getTags()}) {
+    push @tags, $tag_rec->{name};
+}
+@tags = sort @tags;
+print Dumper({tags => \@tags}) if (DEBUG);
+
+printf("Done, got %d categories, %d tags\n", scalar(@categories), scalar(@tags));
+
+# Process feeds
+my @feeds = @{$config->{feeds}};
+
+unless (scalar(@feeds)) {
+    print "\nNo feeds to process!\nPlease edit config file feedposter.yaml\n\n";
+    exit(0);
+}
+
+print "Processing feeds, " . scalar(@feeds) . " to process\n";
+
+foreach my $feed (@feeds) {
+    print "Processing feed $feed->{name} . . .\n";
+    $feed->{processed_at} = time();
+    
+    # Get RSS feed items
+    my $feed_data = get_feed_data(feed => $feed);
+
+    # Get last update date/time for a feed and get all articles
+    # newer than that date
+    print "Getting new feed items . . .\n";
+    my $new_feed_items = get_new_feed_items(
+        feed => $feed,
+        feed_data => $feed_data
+    );
+    if (scalar(@$new_feed_items) == 0) {
+        print "No new feed items found for feed $feed->{name}\n";
+        print "Skipping\n";
+        next;
+
+    } else {
+        printf("Done, found %d new feed items\n", scalar(@$new_feed_items));
     }
-    # TODO Load blog access credentials
 
-    # Create Wordpress proxy object
-    my $wp = WordPress::XMLRPC->new({
-        username => $blog_config->{blog_username},
-        password => $blog_config->{blog_password},
-        proxy => $blog_config->{post_url}
-    });
+    # Scan all new newsfeed items for selected keywords and
+    # get only those matching the keywords
+    print "Matching feed items against blog categories and tags . . .\n";
+    my $result_feed_items =
+        match_feed_items(feed_items => $new_feed_items);
+    printf("Done, %d feed items matched\n", scalar(@$result_feed_items));
 
-    # Set connection args
-    $wp->server()->transport()->proxy()->ssl_opts( verify_hostname => 0 );
-
-    # Set fields for basic auth
-    if ($blog_config->{http_auth}) {
-        my $auth_config = $blog_config->{http_auth_credentials};
-        $wp->server()->transport()->proxy()->credentials(
-            $auth_config->{netloc},
-            $auth_config->{realm},
-            $auth_config->{username},
-            $auth_config->{password}
-        );
+    # Process matched items and post them to WordPress
+    if (scalar(@$result_feed_items) > 0) {
+        print "Posting new feed items to blog . . .\n";
+        foreach my $item_rec (@$result_feed_items) {
+            post_feed_item_to_blog(feed => $feed, item_rec => $item_rec);
+        }
+        print "Done posting\n";
     }
 
-    # Get categories and tags from blog
-    print "Getting categories and tags from blog . . .";
-
-    my @categories = ();
-    foreach my $category_rec (@{$wp->getCategories()}) {
-        push @categories, $category_rec->{categoryName};
-    }
-    @categories = sort @categories;
-    print Dumper({categories => \@categories}) if (DEBUG);
-
-    my @tags = ();
-    foreach my $tag_rec (@{$wp->getTags()}) {
-        push @tags, $tag_rec->{name};
-    }
-    @tags = sort @tags;
-    print Dumper({tags => \@tags}) if (DEBUG);
-
-    printf("Done, got %d categories, %d tags\n", scalar(@categories), scalar(@tags));
-
-    # Process feeds
-    my @feeds = @{$config->{feeds}};
-
-    unless (scalar(@feeds)) {
-        print "\nNo feeds to process!\nPlease edit config file feedposter.yaml\n\n";
-        exit(0);
-    }
-
-    print "Processing feeds, " . scalar(@feeds) . " to process\n";
-
-    foreach my $feed (@feeds) {
-        print "Processing feed $feed->{name} . . .\n";
-        $feed->{processed_at} = time();
-        
-        # Get RSS feed items
-        my $feed_data = get_feed_data(feed => $feed);
-
-        # Get last update date/time for a feed and get all articles
-        # newer than that date
-        print "Getting new feed items . . .\n";
-        my $new_feed_items = get_new_feed_items(
+    # If we have feed items to post to blog - record date of last
+    # processed newsfeed item date and feed last processed time in DB.
+    if (scalar(@$result_feed_items) > 0) {
+        update_feed_db_data(
             feed => $feed,
             feed_data => $feed_data
         );
-        if (scalar(@$new_feed_items) == 0) {
-            print "No new feed items found for feed $feed->{name}\n";
-            print "Skipping\n";
-            next;
-
-        } else {
-            printf("Done, found %d new feed items\n", scalar(@$new_feed_items));
-        }
-
-        # Scan all new newsfeed items for selected keywords and
-        # get only those matching the keywords
-        print "Matching feed items against blog categories and tags . . .\n";
-        my $result_feed_items =
-            match_feed_items(feed_items => $new_feed_items);
-        printf("Done, %d feed items matched\n", scalar(@$result_feed_items));
-
-        # Process matched items and post them to WordPress
-        if (scalar(@$result_feed_items) > 0) {
-            print "Posting new feed items to blog . . .\n";
-            foreach my $item_rec (@$result_feed_items) {
-                post_feed_item_to_blog(feed => $feed, item_rec => $item_rec);
-            }
-            print "Done posting\n";
-        }
-
-        # If we have feed items to post to blog - record date of last
-        # processed newsfeed item date and feed last processed time in DB.
-        if (scalar(@$result_feed_items) > 0) {
-            update_feed_db_data(
-                feed => $feed,
-                feed_data => $feed_data
-            );
-            print "Updated feed DB data\n";
-        }
-
-        print "Done.\n";
+        print "Updated feed DB data\n";
     }
 
-    printf("Finished processing feeds for blog %s.\n", $blog_name);
+    print "Done.\n";
 }
 
-# TODO Update SQL - add blog_id to feed_data table
+print "Finished processing feeds.\n";
 
 # ------------------------------------------------------------------------------
 #  F U N C T I O N S
