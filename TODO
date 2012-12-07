@@ -1,0 +1,24 @@
+
+TODO:
+
+- Fix dates! Incorrect dates handling causing posts to be 'scheduled'
+  instead of published.
+
+- Implement feeds posting per blog
+
+  Best way to do would be with separate config file per blog
+
+- Create related tags table, for instance, matching 'palestine' would
+  automatically match 'israel' and 'middle east' categories/tags
+
+- Implement feed types:
+
+* filtered - feed is filtered by tags/categories from blogs;
+* unfiltered - every item from feed is posted but tags/categories are still
+               supplied, just as in filtered type;
+
+- Impelement per blog switch:
+
+* publish articles but do not post them;
+* post articles immediately;
+
