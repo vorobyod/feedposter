@@ -138,7 +138,7 @@ foreach my $feed (@feeds) {
     # get only those matching the keywords
     print "Matching feed items against blog categories and tags . . .\n";
     my $result_feed_items =
-        match_feed_items(feed_items => $new_feed_items);
+        match_feed_items(feed=> $feed, feed_items => $new_feed_items);
     printf("Done, %d feed items matched\n", scalar(@$result_feed_items));
 
     # Process matched items and post them to WordPress
@@ -272,6 +272,8 @@ sub feed_item_preprocess {
 #
 sub match_feed_items {
     my %args = @_;
+    my $feed = $args{feed} or
+        die 'feed parameter required';
     my $feed_items = $args{feed_items} or
         die 'feed_items parameter required';
 
@@ -306,7 +308,12 @@ sub match_feed_items {
             $item_rec->{tags} = \@matched_tags
         }
 
-        if (%{$item_rec}) {
+        # If feed is not filtered (it is by default) and we could not
+        # match any category or tag, then we will still put it into
+        # result feed items
+        if (%{$item_rec} ||
+                ((exists $feed->{filtered}) && ($feed->{filtered} == 0))) {
+
             $item_rec->{feed_item} = $feed_item;
             $item_rec->{categories} = [] unless (exists $item_rec->{categories});
             $item_rec->{tags} = [] unless (exists $item_rec->{tags});
