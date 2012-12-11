@@ -14,6 +14,7 @@ use DateTime::Format::RSS;
 use DateTime::Format::SQLite;
 use Data::Dumper;
 use DBI;
+use Getopt::Long;
 use HTML::Restrict;
 use LWP::UserAgent;
 use POSIX qw( strftime );
@@ -25,11 +26,40 @@ use constant CONFIG_FILE => 'feedposter.yaml';
 use constant DEBUG => 1;
 use constant FEEDS_DB_FILE => 'feeds_data.db';
 
-my $config = LoadFile(CONFIG_FILE);
+# Read options
+my $options = {};
+GetOptions(
+    'config=s' => \$options->{config},
+    'help' => \$options->{help}
+);
+
+# If help info request - show program usage info
+if ($options->{'help'}) {
+    print_usage();
+    exit(0);
+}
+
+# Check config file. If --config option supplied - load
+# configuration fromn that file. Otherwise - try default config.
+# If not found - exit with usage info.
+my $config = '';
+if (-f $options->{config}) {
+    $config = LoadConfig($options->{config});
+
+} elsif (-f CONFIG_FILE) {
+    # Now try default config
+    $config = LoadFile(CONFIG_FILE);
+
+}else {
+    # No config file found - print usage and exit with error
+    print_usage();
+    exit(1);
+}
+
 my $blog_config = $config->{blog};
 
 # Say hi
-print "\nFeedPoster - v1.0\n\n";
+print_version();
 
 # Create Wordpress proxy object
 my $wp = WordPress::XMLRPC->new({
@@ -353,5 +383,27 @@ sub get_db {
     my $dbh = DBI->connect('dbi:SQLite:dbname=' . FEEDS_DB_FILE ,"","") or
         die 'Cannot open SQLite database, file:  ' . FEEDS_DB_FILE;
     return $dbh;
+}
+
+# ------------------------------------------------------------------------------
+#
+# print_version - print program version
+#
+sub print_version {
+    print "\nFeedPoster - v1.0\n\n";
+}
+
+# ------------------------------------------------------------------------------
+# 
+# print_usage - print usage info
+#
+sub print_usage {
+    print_version();
+    print <<USAGE_INFO;
+Usage:
+
+    feedposter.pl --config <config file path>
+
+USAGE_INFO
 }
 
