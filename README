@@ -1,0 +1,12 @@
+
+Post RSS feed to WordPress blog.
+
+Every feed item is matched against blog category/tag and selected for
+posting to blog only if matched, unless specifically told not to
+filter. In this case feed item is simply posted to blog, matched or not.
+
+Script stores last update dates for each blog so only new feed items
+are posted every time the script is run.
+
+There still a lot to do (like more meaningfull description, naturally)
+but is usable in current condition. Check out yaml config file.
